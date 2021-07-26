@@ -1,0 +1,7 @@
+shallows:
+  - parent: ~/repos/chinese/
+    urls:
+      - https://github.com.cnpmjs.org/zhaoolee/ChineseBQB.git
+  - parent: ~/repos/captcha
+    urls:
+      - https://github.com.cnpmjs.org/MgArcher/Text_select_captcha.git

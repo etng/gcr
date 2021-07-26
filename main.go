@@ -2,58 +2,146 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
+
+	"gopkg.in/yaml.v2"
 )
 
+var prefixes = []string{
+	"git@",
+	"https://",
+	"http://",
+}
+
+func isRepoUrl(u string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(u, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+type ShallowConfig struct {
+	Parent string   `json:"parent,omitempty" yaml:"parent" mapstructure:"parent"`
+	Urls   []string `json:"urls,omitempty" yaml:"urls" mapstructure:"urls"`
+}
+type GcrConfig struct {
+	Shallows []*ShallowConfig `json:"shallows,omitempty" yaml:"shallows" mapstructure:"shallows"`
+}
+
+func ExpandPath(fp string) string {
+	if strings.HasPrefix(fp, "~/") {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, fp[2:])
+	}
+	return fp
+}
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Git Clone Repo helper to speed up git clone")
 		fmt.Println("need repo url")
 		os.Exit(1)
 	}
-	dest_dir := ""
-	repo_url := os.Args[1]
-	repo_url = strings.ReplaceAll(repo_url, "https://github.com/", "https://github.com.cnpmjs.org/")
-	if len(os.Args) > 2 {
-		dest_dir = os.Args[2]
+	if os.Args[1] == "us" {
+		log.Printf("doing shallow git pull batch update")
+		configPath := ExpandPath("~/.gcr.yml")
 
+		if body, e := ioutil.ReadFile(configPath); e == nil {
+			var config GcrConfig
+			if e := yaml.Unmarshal(body, &config); e != nil {
+				print("fail to decode yaml")
+				panic(e)
+			}
+			log.Printf("updating shallow copy repos")
+			chCC := make(chan struct{}, 5)
+			for _, shallowConfig := range config.Shallows {
+				for _, _repoUrl := range shallowConfig.Urls {
+					repoUrl := _repoUrl
+					chCC <- struct{}{}
+					go func() {
+						log.Printf("checking shallow git pull %s", repoUrl)
+						GitCloneRepo(nil, ExpandPath(shallowConfig.Parent), "", repoUrl, true, []string{"--depth", "1"}...)
+						<-chCC
+					}()
+				}
+			}
+		} else {
+			log.Printf("fail to read config file %s", configPath)
+		}
+		return
+	}
+	dest_dir := ""
+	repo_url := ""
+
+	args := os.Args[1:]
+	idx := len(args) - 1
+	fmt.Printf("checking %s\n", args[idx])
+	if isRepoUrl(args[idx]) {
+		repo_url = args[idx]
+		fmt.Printf("yes\n")
+		idx -= 0
+	} else {
+		repo_url = args[idx-1]
+		dest_dir = args[idx]
+		idx -= 1
 	}
 	wd, _ := os.Getwd()
-	args := []string{
-		// "git",
-		"clone",
-		repo_url,
-	}
-	if dest_dir != "" {
-		args = append(args, dest_dir)
-	} else {
-		dest_dir = filepath.Base(repo_url)
-		dest_dir = strings.ReplaceAll(dest_dir, ".git", "")
-	}
-	if _, err := os.Stat(dest_dir); !os.IsNotExist(err) {
-		ExecuteCommand(dest_dir, "git", []string{
-			// "git",
-			"remote",
-			"-v",
-		}...)
-		ExecuteCommand(dest_dir, "git", []string{
-			// "git",
-			"status",
-		}...)
-		ExecuteCommand(dest_dir, "git", []string{
-			// "git",
-			"pull",
-			"--rebase",
-		}...)
-		os.Exit(0)
-	}
-	ExecuteCommand(wd, "git", args...)
+	GitCloneRepo(nil, wd, dest_dir, repo_url, false, args[:idx]...)
 	os.Exit(0)
 }
+func GitCloneRepo(wg *sync.WaitGroup, wd, dest_dir, repo_url string, removeOld bool, gitArgs ...string) {
+	if wg != nil {
+		defer wg.Done()
+	}
+	repo_url = strings.ReplaceAll(repo_url, "https://github.com/", "https://github.com.cnpmjs.org/")
+	if dest_dir == "" {
+		dest_dir = filepath.Base(repo_url)
+		dest_dir = strings.ReplaceAll(dest_dir, ".git", "")
+		dest_dir = filepath.Join(wd, dest_dir)
+	}
+	log.Printf("checking out from %q to %q with args %v", repo_url, dest_dir, gitArgs)
+	gitArgs = append(gitArgs, repo_url, dest_dir)
+
+	if di, err := os.Stat(dest_dir); !os.IsNotExist(err) {
+		if removeOld {
+			if time.Since(di.ModTime()).Hours() < 24 {
+				// stop delete and checkout cycle
+				log.Printf("%q is modified recently, skip delete-and-checkout", dest_dir)
+				return
+			}
+			os.RemoveAll(dest_dir)
+		} else {
+			ExecuteCommand(dest_dir, "git", []string{
+				// "git",
+				"remote",
+				"-v",
+			}...)
+			ExecuteCommand(dest_dir, "git", []string{
+				// "git",
+				"status",
+			}...)
+			ExecuteCommand(dest_dir, "git", []string{
+				// "git",
+				"pull",
+				"--rebase",
+			}...)
+			return
+		}
+		// os.Exit(0)
+	}
+	ExecuteCommand(wd, "git", append([]string{"clone"}, gitArgs...)...)
+
+}
 func ExecuteCommand(wd, name string, args ...string) {
+	log.Printf("git %s", strings.Join(args, " "))
 	cmd := exec.Command("git", args...)
 	cmd.Dir = wd
 	cmd.Stdout = os.Stdout
