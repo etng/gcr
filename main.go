@@ -83,10 +83,8 @@ func main() {
 
 	args := os.Args[1:]
 	idx := len(args) - 1
-	fmt.Printf("checking %s\n", args[idx])
 	if isRepoUrl(args[idx]) {
 		repo_url = args[idx]
-		fmt.Printf("yes\n")
 		idx -= 0
 	} else {
 		repo_url = args[idx-1]
@@ -97,15 +95,22 @@ func main() {
 	GitCloneRepo(nil, wd, dest_dir, repo_url, false, args[:idx]...)
 	os.Exit(0)
 }
+func isDir(path string) bool {
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		return true
+	}
+	return false
+}
 func GitCloneRepo(wg *sync.WaitGroup, wd, dest_dir, repo_url string, removeOld bool, gitArgs ...string) {
 	if wg != nil {
 		defer wg.Done()
 	}
 	repo_url = strings.ReplaceAll(repo_url, "https://github.com/", "https://github.com.cnpmjs.org/")
+	guess_dest_dir := strings.ReplaceAll(filepath.Base(repo_url), ".git", "")
 	if dest_dir == "" {
-		dest_dir = filepath.Base(repo_url)
-		dest_dir = strings.ReplaceAll(dest_dir, ".git", "")
-		dest_dir = filepath.Join(wd, dest_dir)
+		dest_dir = filepath.Join(wd, guess_dest_dir)
+	} else if isDir(dest_dir) && !isDir(filepath.Join(dest_dir, ".git")) {
+		dest_dir = filepath.Join(dest_dir, guess_dest_dir)
 	}
 	log.Printf("checking out from %q to %q with args %v", repo_url, dest_dir, gitArgs)
 	gitArgs = append(gitArgs, repo_url, dest_dir)
