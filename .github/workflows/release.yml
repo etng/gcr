@@ -16,8 +16,8 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          apt-get update
-          apt-get install upx-ucl -y
+          sudo apt-get update
+          sudo apt-get install upx-ucl -y
           make build
           cp gcr gcr-linux-amd64
 
