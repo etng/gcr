@@ -1,0 +1,32 @@
+
+name: Build And Release
+on:
+  push:
+    tag:
+      - 'v*'
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    # 这里我们选择以 tag 的方式惩触发 job 的运行
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Build
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install upx-ucl -y
+          make build
+          cp gcr gcr-linux-amd64
+
+      # 使用 softprops/action-gh-release 来将构建产物上传到 GitHub release 当中
+      - name: Release and upload packages
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            sha256sum.txt
+            gcr-linux-amd64
